@@ -1,14 +1,24 @@
 #!/bin/sh
+# ==============================================================================
+# Odoo 19 Private Repository - Generic Entrypoint Wrapper
+#
+# يستمد الأفكار من Odoo-MultiVersion-Deployment مع تحسينات للأمان والتوافق.
+# ==============================================================================
 set -eu
 umask 077
 
 : "${HOST:=db}"
 : "${PORT:=5432}"
-: "${USER:?USER must be set}"
-: "${PASSWORD:?PASSWORD must be set}"
-: "${ODOO_ADMIN_PASSWORD:?ODOO_ADMIN_PASSWORD must be set}"
-: "${ODOO_PROXY_MODE:=False}"
+: "${USER:=odoo}"
+: "${PASSWORD:=}"
+: "${ODOO_ADMIN_PASSWORD:=odoo19}"
 
+# تثبيت متطلبات بايثون الإضافية إذا أضافها المشغل.
+if [ -f /etc/odoo/requirements.txt ]; then
+    pip3 install --no-cache-dir -r /etc/odoo/requirements.txt
+fi
+
+# Render the environment-backed settings without modifying the mounted config.
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -16,25 +26,25 @@ from pathlib import Path
 source = Path("/etc/odoo/odoo.conf").read_text(encoding="utf-8")
 values = {
     "${ODOO_ADMIN_PASSWORD}": os.environ["ODOO_ADMIN_PASSWORD"],
-    "${POSTGRES_USER}": os.environ["USER"],
-    "${POSTGRES_PASSWORD}": os.environ["PASSWORD"],
-    "${ODOO_PROXY_MODE}": os.environ.get("ODOO_PROXY_MODE", "False"),
+    "${ODOO_DB_USER}": os.environ["USER"],
+    "${ODOO_DB_PASSWORD}": os.environ["PASSWORD"],
 }
 for placeholder, value in values.items():
     if "\n" in value or "\r" in value:
         raise SystemExit(f"Invalid newline in value for {placeholder}")
     source = source.replace(placeholder, value)
 
-unresolved = [placeholder for placeholder in values if placeholder in source]
-if unresolved:
-    raise SystemExit(f"Unresolved Odoo configuration values: {', '.join(unresolved)}")
+if any(placeholder in source for placeholder in values):
+    raise SystemExit("Unresolved environment variable in /etc/odoo/odoo.conf")
 
 config = Path("/tmp/odoo.conf")
 config.write_text(source, encoding="utf-8")
 config.chmod(0o600)
 PY
 
-python3 - <<'PY'
+# الانتظار حتى تقبل PostgreSQL الاتصالات قبل تشغيل أودو.
+if [ -n "${PASSWORD}" ]; then
+    python3 - <<'PY'
 import os
 import socket
 import time
@@ -50,5 +60,6 @@ for _ in range(60):
 else:
     raise SystemExit(f"Timed out waiting for PostgreSQL at {host}:{port}")
 PY
+fi
 
 exec odoo "$@"

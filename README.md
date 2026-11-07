@@ -8,156 +8,359 @@
 [![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
-[Quick Start](#quick-start) · [Multiple Instances](#multiple-instances) · [Traefik](#traefik--https) · [Operations](#operations)
+[Quick Start](#4-quick-start) · [Multiple Instances](#7-multiple-instances) · [Operations](#9-container-management) · [Troubleshooting](#12-troubleshooting)
 
 </div>
 
 ---
 
-## Overview
+## Contents
 
-Run Odoo 19 and PostgreSQL 18 with Docker Compose. Use the standard Compose
-file for a directly exposed HTTP service, or the optional Traefik file for
-HTTPS behind an existing Traefik installation. PostgreSQL is private to the
-Docker network; Odoo data and PostgreSQL data persist across container
-recreation.
+1. [Overview](#1-overview)
+2. [Requirements](#2-requirements)
+3. [Architecture](#3-architecture)
+4. [Quick Start](#4-quick-start)
+5. [Access and Initial Credentials](#5-access-and-initial-credentials)
+6. [Configuration](#6-configuration)
+7. [Multiple Instances](#7-multiple-instances)
+8. [Traefik / HTTPS](#8-traefik--https)
+9. [Container Management](#9-container-management)
+10. [Backups](#10-backups)
+11. [Linux Host Tuning and Permissions](#11-linux-host-tuning-and-permissions)
+12. [Troubleshooting](#12-troubleshooting)
+13. [Project Layout and Security](#13-project-layout-and-security)
+14. [References](#14-references)
 
-| Service | Image | Host ports | Persistent data |
+---
+
+## 1. Overview
+
+Run Odoo 19 and PostgreSQL 18 with Docker Compose. Use the standard setup for
+one instance, or `run.sh` to install separate instances on different ports.
+An optional Compose file connects Odoo to an existing Traefik network.
+
+| Component | Image | Host access | Persistent storage |
 |---|---|---|---|
-| Odoo | `odoo:19` | `10019` web · `20019` live communication | Docker volume |
-| PostgreSQL | `postgres:18` | Not published | `./postgresql/` |
+| Odoo | `odoo:19` | `10019` HTTP · `20019` live service | `odoo_data` volume |
+| PostgreSQL | `postgres:18` | Not published | `./postgresql` |
 
-## Requirements
+## 2. Requirements
 
-- Docker Engine and Docker Compose v2 (`docker compose`).
-- Ubuntu/Linux server. On Windows, use WSL 2 with Docker integration.
-- OpenSSL for automatic generation of local passwords.
-- Available host ports `10019` and `20019`, unless changed in `.env`.
+- Docker Engine.
+- Docker Compose v2 (`docker compose`).
+- Ubuntu/Linux server; Windows users can use WSL 2 with Docker integration.
 
-## Quick Start
+## 3. Architecture
+
+```mermaid
+flowchart LR
+    U([User]) -->|HTTP :10019| O[Odoo 19]
+    U -->|Live service :20019| O
+    O -->|Private Docker network| D[(PostgreSQL 18)]
+    O --> F[(Odoo data volume)]
+    D --> P[(./postgresql)]
+```
+
+PostgreSQL is not published to the host. In Traefik mode, requests reach
+Odoo through the configured reverse proxy instead of host-published ports.
+
+## 4. Quick Start
+
+### 1 · Get the project
 
 ```bash
 git clone https://github.com/abdalazeim/InstallingOdoo19-Docker-Deployment.git
 cd InstallingOdoo19-Docker-Deployment
-cp .env.example .env
-chmod 600 .env
 ```
 
-Edit `.env` to set the desired ports and passwords. The password fields are
-blank in the example file; the installer generates separate random values
-for any blank password before starting the services.
+### 2 · Set environment and file permissions
 
 ```bash
-chmod +x entrypoint.sh scripts/install-odoo19.sh
-./scripts/install-odoo19.sh
+cp .env.example .env
+chmod 600 .env
+mkdir -p postgresql
+chmod 700 postgresql
+chmod +x entrypoint.sh
+```
+
+### 3 · Start
+
+```bash
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
-Open [http://localhost:10019](http://localhost:10019). The Odoo database
-manager master password is the value of `ODOO_ADMIN_PASSWORD` in `.env`.
-Change it and the PostgreSQL password before exposing the service publicly.
+## 5. Access and Initial Credentials
 
-## Configuration
+| Service | Address |
+|---|---|
+| Odoo web interface | **[http://localhost:10019](http://localhost:10019)** |
+| Live communication port | **[http://localhost:20019](http://localhost:20019)** |
+
+> Port `20019` is the live communication/WebSocket service, not a second Odoo
+> web interface. Open Odoo itself on port `10019`.
+
+| Credential | Initial value | Used for |
+|---|---|---|
+| Odoo master password | `Admin@19` | Odoo database-management operations |
+| PostgreSQL user | `odoo19` | Odoo-to-PostgreSQL connection |
+| PostgreSQL password | `odoo@19` | Odoo-to-PostgreSQL connection |
+| Initial PostgreSQL database | `postgre` | PostgreSQL image initialization |
+
+These are example credentials, **not production secrets**. Change them in
+`.env` before exposing the service publicly. The Odoo master password is
+different from the administrator login you create for an Odoo application
+database.
+
+## 6. Configuration
+
+Edit `.env`; do not commit it. The file is already excluded by `.gitignore`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ODOO_HTTP_PORT` | `10019` | Host port for Odoo web |
-| `ODOO_CHAT_PORT` | `20019` | Host port for live communication |
-| `POSTGRES_USER` | `odoo19` | PostgreSQL user |
-| `POSTGRES_PASSWORD` | Generated by installer | PostgreSQL password |
-| `POSTGRES_DB` | `postgres` | Initial PostgreSQL database |
-| `ODOO_ADMIN_PASSWORD` | Generated by installer | Odoo database manager master password |
-| `ODOO_IMAGE` / `PG_IMAGE` | `odoo:19` / `postgres:18` | Container images |
+| `ODOO_IMAGE` | `odoo:19` | Odoo image |
+| `PG_IMAGE` | `postgres:18` | PostgreSQL image |
+| `POSTGRES_USER` | `odoo19` | PostgreSQL role |
+| `POSTGRES_PASSWORD` | `odoo@19` | PostgreSQL role password |
+| `POSTGRES_DB` | `postgre` | Initial database created by the image |
+| `ODOO_ADMIN_PASSWORD` | `Admin@19` | Odoo master password |
+| `ODOO_HTTP_PORT` | `10019` | Host port → Odoo `8069` |
+| `ODOO_CHAT_PORT` | `20019` | Host port → Odoo `8072` |
+| `ODOO_NETWORK` | `odoo19_internal` | Private Docker network |
+| `ODOO_DOMAIN` | Required for Traefik | Public hostname |
+| `DOCKER_PROXY_NETWORK` | `proxy` | Existing Traefik network |
+| `CERTSRESOLVER` | `letsencrypt` | Traefik certificate resolver |
 
-The Odoo configuration template is [etc/odoo.conf](etc/odoo.conf). The
-entrypoint renders it to a private, temporary file using values from `.env`.
-Custom addons belong in `addons/`.
+Example: use host ports `11019` and `21019`:
 
-## Multiple Instances
-
-`run.sh` clones and starts an independent copy. Each copy receives unique
-container, network, volume, and Traefik router names.
-
-```bash
-bash run.sh --destination odoo-live --port 10019 --chat 20019
-bash run.sh --destination odoo-test --port 11019 --chat 21019
+```dotenv
+ODOO_HTTP_PORT=11019
+ODOO_CHAT_PORT=21019
 ```
 
-The destination must not already exist. Each instance has its own `.env`,
-PostgreSQL data directory, and Odoo data volume.
-
-## Traefik / HTTPS
-
-This mode expects an already-running Traefik service, an external Docker
-network shared with Traefik, and a configured `websecure` entrypoint and
-`letsencrypt` certificate resolver.
-
-1. Set `ODOO_DOMAIN`, `DOCKER_PROXY_NETWORK`, and a unique
-   `ODOO_ROUTER_NAME` in `.env`.
-2. Ensure the named Docker network exists and is shared with Traefik.
-3. If switching from the standard Compose file, stop its containers without
-   removing volumes:
-
-   ```bash
-   docker compose down
-   ```
-
-4. Start the Traefik stack:
-
-   ```bash
-   docker compose -f docker-compose.traefik.yml up -d
-   ```
-
-The Traefik Compose file does not publish Odoo or PostgreSQL host ports. It
-routes HTTP and `/websocket` traffic through the proxy.
-
-## Operations
-
-Run these commands from the project directory:
+Apply changes:
 
 ```bash
+docker compose up -d
+```
+
+> **Existing database:** PostgreSQL initialization variables apply only when
+> the data directory is first initialized. Editing credentials in `.env`
+> does not change roles, passwords, or databases in existing data.
+
+Custom addons go in [`addons/`](addons/). Odoo settings are in
+[`etc/odoo.conf`](etc/odoo.conf); runtime secrets are rendered from the
+container environment and should not be added to that tracked file.
+
+## 7. Multiple Instances
+
+`run.sh` clones this repository into a **new directory**, writes that
+instance's `.env`, sets its ports and unique container/network names, and
+starts Docker Compose. It will not overwrite an existing destination.
+
+```mermaid
+flowchart TD
+    A([Start]) --> B{Destination exists?}
+    B -->|Yes| X[Stop · choose another name]
+    B -->|No| C{Git + Docker Compose available?}
+    C -->|No| Y[Install requirements]
+    C -->|Yes| D[Clone this repository]
+    D --> E[Create instance .env + data directory]
+    E --> F[Set ports and unique names]
+    F --> G[Start Odoo + PostgreSQL]
+    G --> H([Open the instance URL])
+```
+
+**Requirements:** Git, Docker Engine, Docker Compose v2, and permission to run
+Docker. Run from the repository root:
+
+```bash
+# Instance 1
+sudo bash run.sh --destination odoo-live --port 10019 --chat 20019
+
+# Instance 2
+sudo bash run.sh --destination odoo-test --port 11019 --chat 21019
+```
+
+| Instance | Destination | Odoo URL | Live service |
+|---|---|---|---|
+| `odoo-live` | `odoo-live/` | [http://localhost:10019](http://localhost:10019) | `20019` |
+| `odoo-test` | `odoo-test/` | [http://localhost:11019](http://localhost:11019) | `21019` |
+
+The same commands can download the installer from this repository's `main`
+branch. Review scripts before piping a remote download to a shell:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdalazeim/InstallingOdoo19-Docker-Deployment/main/run.sh \
+  | bash -s -- --destination odoo-live --port 10019 --chat 20019
+
+curl -fsSL https://raw.githubusercontent.com/abdalazeim/InstallingOdoo19-Docker-Deployment/main/run.sh \
+  | bash -s -- --destination odoo-test --port 11019 --chat 21019
+```
+
+Each instance has its own PostgreSQL directory and Odoo data volume. Manage
+it from its destination directory:
+
+```bash
+cd odoo-live
 docker compose ps
 docker compose logs -f
-docker compose restart
-docker compose stop
-docker compose down
 ```
 
-`docker compose down -v` also deletes Odoo's named data volume. Do not use it
-unless you intentionally want to remove Odoo data.
+## 8. Traefik / HTTPS
 
-### Database backup
+Use [`docker-compose.traefik.yml`](docker-compose.traefik.yml) only when
+Traefik is already running and its external Docker network exists.
+
+```dotenv
+ODOO_DOMAIN=odoo.example.com
+DOCKER_PROXY_NETWORK=proxy
+CERTSRESOLVER=letsencrypt
+```
 
 ```bash
-./scripts/backup.sh
-./scripts/health-check.sh
+# Only if the shared network has not already been created
+docker network create proxy
+
+docker compose -f docker-compose.traefik.yml up -d
 ```
 
-The backup includes all PostgreSQL databases and the Odoo filestore. The
-default output directory is `backups/` in the project. Both scripts read the
-container names from `.env`. Keep backups and a copy of `.env` in a secure
-location; `.env` contains passwords and is excluded from Git.
+Configure DNS and Traefik's entrypoint/certificate resolver for your server,
+then open `https://odoo.example.com`. Do not run standard and Traefik modes
+simultaneously for the same instance.
 
-## Troubleshooting
+## 9. Container Management
 
-- **Odoo cannot connect to PostgreSQL:** check `docker compose ps` and
-  `docker compose logs db`; wait for the PostgreSQL health check to pass.
-- **Port already in use:** change `ODOO_HTTP_PORT` or `ODOO_CHAT_PORT` in
-  `.env`, then run `docker compose up -d`.
-- **Traefik cannot route requests:** verify the external network, domain,
-  router name, certificate resolver, and Traefik logs.
-- **Configuration changes are not applied:** recreate Odoo with
-  `docker compose up -d --force-recreate odoo19`.
+Run from the deployment directory:
 
-## Project Layout
+| Action | Command |
+|---|---|
+| Start | `docker compose up -d` |
+| Status | `docker compose ps` |
+| Follow all logs | `docker compose logs -f` |
+| Odoo logs | `docker compose logs -f odoo19` |
+| PostgreSQL logs | `docker compose logs -f db` |
+| Restart | `docker compose restart` |
+| Stop; keep containers and data | `docker compose stop` |
+| Stop; keep data | `docker compose down` |
+
+Both services use `restart: always`: Docker restarts them after a failure or
+host restart. `docker compose down` preserves data. Avoid `docker compose down
+-v` unless you intend to delete the named Odoo data volume. Never delete
+`postgresql/` unless you intend to remove the PostgreSQL data.
+
+## 10. Backups
+
+The PostgreSQL bind mount is `postgresql/`; Odoo attachments and files are
+stored in the `odoo_data` named volume. Back up both:
+
+Run these commands from the default single-instance project. For an instance
+created by `run.sh`, replace `odoo19-db` and `odoo19` with the container names
+shown by `docker compose ps`.
+
+```bash
+mkdir -p backups
+docker exec odoo19-db pg_dumpall -U odoo19 > backups/postgresql-all.sql
+docker exec odoo19 tar -C /var/lib/odoo -czf /tmp/odoo-data.tar.gz .
+docker cp odoo19:/tmp/odoo-data.tar.gz backups/odoo-data.tar.gz
+docker exec odoo19 rm -f /tmp/odoo-data.tar.gz
+```
+
+Protect backup files: SQL dumps may contain credentials and business data.
+Keep an additional copy outside the server and test restoration regularly.
+
+## 11. Linux Host Tuning and Permissions
+
+### File permissions
+
+Do **not** use `chmod -R 777`: it grants every local user read/write/execute
+access. Use restrictive permissions:
+
+```bash
+chmod 600 .env
+chmod 700 postgresql
+chmod +x entrypoint.sh
+```
+
+If a bind mount reports a permission error, inspect the specific path and
+container logs before changing ownership:
+
+```bash
+docker compose logs --tail=100
+ls -ld addons etc postgresql
+```
+
+Change permissions only on the affected directory. Do not make database data
+or password files world-writable.
+
+### Optional · Increase Linux inotify watches
+
+This host setting may help when running many instances and the system reports
+that its file-watch limit is exhausted. It is not normally required:
+
+```bash
+if grep -qF "fs.inotify.max_user_watches" /etc/sysctl.conf; then
+  grep -F "fs.inotify.max_user_watches" /etc/sysctl.conf
+else
+  echo "fs.inotify.max_user_watches = 524288" | sudo tee -a /etc/sysctl.conf
+fi
+
+sudo sysctl -p
+```
+
+## 12. Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Port already in use | Change `ODOO_HTTP_PORT` / `ODOO_CHAT_PORT` in `.env`; run `docker compose up -d` |
+| Odoo cannot connect to PostgreSQL | `docker compose logs db odoo19` |
+| PostgreSQL readiness | `docker compose exec db pg_isready -U odoo19 -d postgre` |
+| Odoo configuration error | `docker compose logs --tail=100 odoo19` |
+| Credentials changed but old ones still work | Existing PostgreSQL data is not re-initialized from `.env` |
+| Traefik route unavailable | Check DNS, external network, resolver, entrypoint, and `ODOO_DOMAIN` |
+
+```mermaid
+flowchart LR
+    A([Odoo unavailable]) --> B{Containers running?}
+    B -->|No| C[Check docker compose ps]
+    B -->|Yes| D{Database ready?}
+    D -->|No| E[Check PostgreSQL logs and credentials]
+    D -->|Yes| F{Correct host port?}
+    F -->|No| G[Check .env port mapping]
+    F -->|Yes| H[Check Odoo logs and configuration]
+```
+
+## 13. Project Layout and Security
+
+### Project layout
 
 ```text
-.
+InstallingOdoo19-Docker-Deployment/
 ├── addons/                       # Custom Odoo addons
-├── etc/odoo.conf                 # Odoo configuration template
-├── postgresql/                   # PostgreSQL 18 data (created on startup)
-├── docker-compose.yml            # Direct HTTP deployment
-├── docker-compose.traefik.yml    # Optional HTTPS deployment
-├── entrypoint.sh                 # Renders configuration and starts Odoo
-└── scripts/install-odoo19.sh     # Initializes and starts this project
+├── etc/
+│   ├── odoo.conf                 # Odoo configuration template
+│   └── requirements.txt          # Optional Python dependencies
+├── postgresql/                   # PostgreSQL data (persistent; not committed)
+├── .env.example                  # Environment template
+├── docker-compose.yml            # Direct host-port deployment
+├── docker-compose.traefik.yml    # Optional Traefik deployment
+├── entrypoint.sh                 # Runtime config + PostgreSQL wait
+├── run.sh                        # Optional multi-instance installer
+└── README.md
 ```
+
+### Security checklist
+
+- [ ] Replace the example Odoo and PostgreSQL passwords.
+- [ ] Keep `.env`, database data, and backups out of Git.
+- [ ] Do not publish PostgreSQL's port.
+- [ ] Use HTTPS through a trusted reverse proxy for public access.
+- [ ] Keep Docker Engine and container images updated.
+
+## 14. References
+
+- [Odoo 19 documentation](https://www.odoo.com/documentation/19.0/)
+- [Docker Compose documentation](https://docs.docker.com/compose/)
+- [GitHub repository](https://github.com/abdalazeim/InstallingOdoo19-Docker-Deployment)
+- [Report an issue](https://github.com/abdalazeim/InstallingOdoo19-Docker-Deployment/issues)

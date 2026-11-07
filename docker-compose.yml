@@ -1,35 +1,66 @@
 services:
   db:
-    image: postgres:18
-    user: root
+    container_name: ${ODOO_DB_CONTAINER_NAME:-odoo19-db}
+    image: ${PG_IMAGE:-postgres:18}
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=odoo
-      - POSTGRES_PASSWORD=odoo19
-      - POSTGRES_DB=postgres
-    restart: always             # run as a service
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     volumes:
-        - ./postgresql:/var/lib/postgresql/18/docker      # Important Change: the PGDATA environment variable of the image was changed to be version specific in PostgreSQL 18 and above⁠
+      - ./postgresql:/var/lib/postgresql/18/docker
+    networks:
+      - internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   odoo19:
-    image: odoo:19
-    user: root
+    container_name: ${ODOO_CONTAINER_NAME:-odoo19}
+    image: ${ODOO_IMAGE:-odoo:19}
     depends_on:
-      - db
-    ports:
-      - "10019:8069"
-      - "20019:8072" # live chat
-    tty: true
-    command: --
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["--config=/tmp/odoo.conf"]
     environment:
-      - HOST=db
-      - USER=odoo
-      - PASSWORD=odoo19
-      - PIP_BREAK_SYSTEM_PACKAGES=1
+      HOST: db
+      PORT: 5432
+      USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      ODOO_ADMIN_PASSWORD: ${ODOO_ADMIN_PASSWORD:?Set ODOO_ADMIN_PASSWORD in .env}
+      ODOO_PROXY_MODE: ${ODOO_PROXY_MODE:-False}
+    ports:
+      - "${ODOO_HTTP_PORT:-10019}:8069"
+      - "${ODOO_CHAT_PORT:-20019}:8072"
     volumes:
-      #- /etc/timezone:/etc/timezone:ro
-      #- /etc/localtime:/etc/localtime:ro
-      - ./entrypoint.sh:/entrypoint.sh
-      - ./addons:/mnt/extra-addons
-      - ./etc:/etc/odoo
-    restart: always             # run as a service
-    
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./addons:/mnt/extra-addons:ro
+      - ./etc:/etc/odoo:ro
+      - odoo_data:/var/lib/odoo
+    networks:
+      - internal
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8069/web/login', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+networks:
+  internal:
+    name: ${ODOO_NETWORK:-odoo19_internal}
+    driver: bridge
+
+volumes:
+  odoo_data:
+    name: ${ODOO_DATA_VOLUME:-odoo19_data}

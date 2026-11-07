@@ -1,63 +1,72 @@
-# ==============================================================================
-# Odoo 19 + PostgreSQL 18 - Traefik Compose (optional reverse-proxy mode)
-#
-# Used by install-odoo.sh --with-traefik. Odoo joins the shared external
-# "proxy" network and is routed over HTTPS; PostgreSQL stays private.
-# ==============================================================================
-name: odoo19
-
 services:
   db:
-    container_name: odoo19-db
+    container_name: ${ODOO_DB_CONTAINER_NAME:-odoo19-db}
     image: ${PG_IMAGE:-postgres:18}
-    user: root
-    restart: always
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-odoo}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-odoo19}
-      - POSTGRES_DB=postgres
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     volumes:
       - ./postgresql:/var/lib/postgresql/18/docker
     networks:
       - internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   odoo19:
-    container_name: odoo19
+    container_name: ${ODOO_CONTAINER_NAME:-odoo19}
     image: ${ODOO_IMAGE:-odoo:19}
-    user: root
     depends_on:
-      - db
-    restart: always
-    tty: true
-    command: ["--config=/etc/odoo/odoo.conf"]
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["--config=/tmp/odoo.conf"]
     environment:
-      - HOST=db
-      - USER=${POSTGRES_USER:-odoo}
-      - PASSWORD=${POSTGRES_PASSWORD:-odoo19}
-      - PIP_BREAK_SYSTEM_PACKAGES=1
+      HOST: db
+      PORT: 5432
+      USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      ODOO_ADMIN_PASSWORD: ${ODOO_ADMIN_PASSWORD:?Set ODOO_ADMIN_PASSWORD in .env}
+      ODOO_PROXY_MODE: "True"
     volumes:
-      - ./entrypoint.sh:/entrypoint.sh
-      - ./addons:/mnt/extra-addons
-      - ./etc:/etc/odoo
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./addons:/mnt/extra-addons:ro
+      - ./etc:/etc/odoo:ro
+      - odoo_data:/var/lib/odoo
     networks:
       - internal
       - proxy
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8069/web/login', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
     labels:
-      traefik.enable: "true"
-      traefik.docker.network: "${DOCKER_PROXY_NETWORK:-proxy}"
-
-      traefik.http.routers.odoo19.rule: "Host(`${ODOO_DOMAIN:?ODOO_DOMAIN is required}`)"
-      traefik.http.routers.odoo19.entrypoints: "websecure"
-      traefik.http.routers.odoo19.tls.certresolver: "letsencrypt"
-      traefik.http.routers.odoo19.service: "odoo19"
-      traefik.http.services.odoo19.loadbalancer.server.port: "8069"
-
-      traefik.http.routers.odoo19-websocket.rule: "Host(`${ODOO_DOMAIN:?ODOO_DOMAIN is required}`) && PathPrefix(`/websocket`)"
-      traefik.http.routers.odoo19-websocket.entrypoints: "websecure"
-      traefik.http.routers.odoo19-websocket.tls.certresolver: "letsencrypt"
-      traefik.http.routers.odoo19-websocket.priority: "100"
-      traefik.http.routers.odoo19-websocket.service: "odoo19-websocket"
-      traefik.http.services.odoo19-websocket.loadbalancer.server.port: "8072"
+      - "traefik.enable=true"
+      - "traefik.docker.network=${DOCKER_PROXY_NETWORK:-proxy}"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}.rule=Host(`${ODOO_DOMAIN:?Set ODOO_DOMAIN in .env}`)"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}.entrypoints=websecure"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}.service=${ODOO_ROUTER_NAME:-odoo19}"
+      - "traefik.http.services.${ODOO_ROUTER_NAME:-odoo19}.loadbalancer.server.port=8069"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}-websocket.rule=Host(`${ODOO_DOMAIN:?Set ODOO_DOMAIN in .env}`) && PathPrefix(`/websocket`)"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}-websocket.entrypoints=websecure"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}-websocket.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}-websocket.priority=100"
+      - "traefik.http.routers.${ODOO_ROUTER_NAME:-odoo19}-websocket.service=${ODOO_ROUTER_NAME:-odoo19}-websocket"
+      - "traefik.http.services.${ODOO_ROUTER_NAME:-odoo19}-websocket.loadbalancer.server.port=8072"
 
 networks:
   internal:
@@ -66,3 +75,7 @@ networks:
   proxy:
     external: true
     name: ${DOCKER_PROXY_NETWORK:-proxy}
+
+volumes:
+  odoo_data:
+    name: ${ODOO_DATA_VOLUME:-odoo19_data}

@@ -1,133 +1,119 @@
-#!/bin/bash
-set -euo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-# Parse named arguments (required: destination/port/chat; optional: password/db-password)
+REPOSITORY_URL="https://github.com/abdalazeim/InstallingOdoo19-Docker-Deployment.git"
 DESTINATION=""
-PORT=""
-CHAT=""
-PASSWORD=""
-DB_PASSWORD=""
+ODOO_PORT=""
+CHAT_PORT=""
 
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --destination)
-      DESTINATION="$2"
-      shift 2
-      ;;
-    --port)
-      PORT="$2"
-      shift 2
-      ;;
-    --chat)
-      CHAT="$2"
-      shift 2
-      ;;
-    --password)
-      PASSWORD="$2"
-      shift 2
-      ;;
-    --db-password)
-      DB_PASSWORD="$2"
-      shift 2
-      ;;
-    *)
-      echo "Error: Unknown option: $1" >&2
-      echo "Usage: $0 --destination <path> --port <port> --chat <chat_port> [--password <master_password>] [--db-password <db_password>]" >&2
-      exit 1
-      ;;
-  esac
-done
+usage() {
+    cat <<'EOF'
+Usage:
+  bash run.sh --destination <directory> --port <odoo-port> --chat <chat-port>
 
-# Validate all required arguments are provided
-if [[ -z "$DESTINATION" ]] || [[ -z "$PORT" ]] || [[ -z "$CHAT" ]]; then
-  echo "Error: Missing required arguments" >&2
-  echo "Usage: $0 --destination <path> --port <port> --chat <chat_port> [--password <master_password>] [--db-password <db_password>]" >&2
-  exit 1
-fi
-
-# Clone Odoo directory
-git clone --depth=1 https://github.com/abdalazeim/DevOpsInfrastructureOdoo.git $DESTINATION
-rm -rf $DESTINATION/.git
-
-# Determine master password (use provided value or config default)
-CONFIG_PATH="$DESTINATION/etc/odoo.conf"
-DEFAULT_ADMIN_PASSWD="$(grep -E '^[[:space:]]*admin_passwd[[:space:]]*=' "$CONFIG_PATH" | head -n 1 | sed -E 's/^[[:space:]]*admin_passwd[[:space:]]*=[[:space:]]*//')"
-MASTER_PASSWORD="${PASSWORD:-$DEFAULT_ADMIN_PASSWD}"
-DEFAULT_DB_PASSWORD="$(grep -E '^[[:space:]]*-[[:space:]]*POSTGRES_PASSWORD=' "$DESTINATION/docker-compose.yml" | head -n 1 | sed -E 's/^[[:space:]]*-[[:space:]]*POSTGRES_PASSWORD=//')"
-EFFECTIVE_DB_PASSWORD="${DB_PASSWORD:-$DEFAULT_DB_PASSWORD}"
-
-escape_sed_replacement() {
-  printf '%s' "$1" | sed -e 's/[\\/&]/\\&/g'
+Example:
+  bash run.sh --destination odoo-live --port 10019 --chat 20019
+EOF
 }
 
-# Create PostgreSQL directory
-mkdir -p $DESTINATION/postgresql
+while (($#)); do
+    case "$1" in
+        --destination)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            DESTINATION="$2"
+            shift 2
+            ;;
+        --port)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            ODOO_PORT="$2"
+            shift 2
+            ;;
+        --chat)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            CHAT_PORT="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf 'Error: unknown argument: %s\n' "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
-# Change ownership to current user and set restrictive permissions for security
-sudo chown -R $USER:$USER $DESTINATION
-sudo chmod -R 700 $DESTINATION  # Only the user has access
-
-# Check if running on macOS
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  echo "Running on macOS. Skipping inotify configuration."
-else
-  # System configuration
-  if grep -qF "fs.inotify.max_user_watches" /etc/sysctl.conf; then
-    echo $(grep -F "fs.inotify.max_user_watches" /etc/sysctl.conf)
-  else
-    echo "fs.inotify.max_user_watches = 524288" | sudo tee -a /etc/sysctl.conf
-  fi
-  sudo sysctl -p
+if [[ -z "${DESTINATION}" || -z "${ODOO_PORT}" || -z "${CHAT_PORT}" ]]; then
+    usage >&2
+    exit 2
 fi
 
-# Set ports in docker-compose.yml and optionally update master/db passwords
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS sed syntax
-  sed -i '' 's/10019/'$PORT'/g' $DESTINATION/docker-compose.yml
-  sed -i '' 's/20019/'$CHAT'/g' $DESTINATION/docker-compose.yml
-  if [[ -n "$PASSWORD" ]]; then
-    ESCAPED_PASSWORD="$(escape_sed_replacement "$MASTER_PASSWORD")"
-    sed -i '' -E "s/^[[:space:]]*admin_passwd[[:space:]]*=.*/admin_passwd = $ESCAPED_PASSWORD/" "$CONFIG_PATH"
-  fi
-  if [[ -n "$DB_PASSWORD" ]]; then
-    ESCAPED_DB_PASSWORD="$(escape_sed_replacement "$DB_PASSWORD")"
-    sed -i '' -E "s/^([[:space:]]*-[[:space:]]*POSTGRES_PASSWORD=).*/\\1$ESCAPED_DB_PASSWORD/" "$DESTINATION/docker-compose.yml"
-    sed -i '' -E "s/^([[:space:]]*-[[:space:]]*PASSWORD=).*/\\1$ESCAPED_DB_PASSWORD/" "$DESTINATION/docker-compose.yml"
-  fi
-else
-  # Linux sed syntax
-  sed -i 's/10019/'$PORT'/g' $DESTINATION/docker-compose.yml
-  sed -i 's/20019/'$CHAT'/g' $DESTINATION/docker-compose.yml
-  if [[ -n "$PASSWORD" ]]; then
-    ESCAPED_PASSWORD="$(escape_sed_replacement "$MASTER_PASSWORD")"
-    sed -i -E "s/^[[:space:]]*admin_passwd[[:space:]]*=.*/admin_passwd = $ESCAPED_PASSWORD/" "$CONFIG_PATH"
-  fi
-  if [[ -n "$DB_PASSWORD" ]]; then
-    ESCAPED_DB_PASSWORD="$(escape_sed_replacement "$DB_PASSWORD")"
-    sed -i -E "s/^([[:space:]]*-[[:space:]]*POSTGRES_PASSWORD=).*/\\1$ESCAPED_DB_PASSWORD/" "$DESTINATION/docker-compose.yml"
-    sed -i -E "s/^([[:space:]]*-[[:space:]]*PASSWORD=).*/\\1$ESCAPED_DB_PASSWORD/" "$DESTINATION/docker-compose.yml"
-  fi
+validate_port() {
+    local name="$1"
+    local value="$2"
+    if [[ ! "${value}" =~ ^[0-9]+$ ]] || ((10#${value} < 1 || 10#${value} > 65535)); then
+        printf 'Error: %s must be a port number between 1 and 65535.\n' "${name}" >&2
+        exit 2
+    fi
+}
+
+validate_port "--port" "${ODOO_PORT}"
+validate_port "--chat" "${CHAT_PORT}"
+
+if [[ "${DESTINATION}" == "/" || "${DESTINATION}" == "." || "${DESTINATION}" == ".." ]]; then
+    printf 'Error: destination must be a new project directory, not %s.\n' "${DESTINATION}" >&2
+    exit 2
 fi
 
-# Set file and directory permissions after installation
-find $DESTINATION -type f -exec chmod 644 {} \;
-find $DESTINATION -type d -exec chmod 755 {} \;
-
-chmod +x $DESTINATION/entrypoint.sh
-
-# Check if docker needs sudo - docker ps exits with error if user lacks permissions
-DOCKER_SUDO=""
-if ! docker ps >/dev/null 2>&1; then
-  echo "Docker requires sudo privileges"
-  DOCKER_SUDO="sudo"
+if ! command -v git >/dev/null 2>&1; then
+    printf 'Error: Git is required. Install Git and try again.\n' >&2
+    exit 1
 fi
 
-# Run Odoo
-if ! is_present="$(type -p "docker-compose")" || [[ -z $is_present ]]; then
-  $DOCKER_SUDO docker compose -f $DESTINATION/docker-compose.yml up -d
-else
-  $DOCKER_SUDO docker-compose -f $DESTINATION/docker-compose.yml up -d
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+    printf 'Error: Docker Engine and Docker Compose v2 are required.\n' >&2
+    exit 1
 fi
 
+if [[ -e "${DESTINATION}" ]]; then
+    printf 'Error: destination already exists: %s\n' "${DESTINATION}" >&2
+    exit 1
+fi
 
-echo "Odoo started at http://localhost:$PORT | Master Password: $MASTER_PASSWORD | DB Password: $EFFECTIVE_DB_PASSWORD | Live chat port: $CHAT"
+INSTANCE_NAME="${DESTINATION##*/}"
+INSTANCE_SLUG="$(printf '%s' "${INSTANCE_NAME}" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//')"
+
+if [[ -z "${INSTANCE_SLUG}" ]]; then
+    printf 'Error: destination must include letters or numbers.\n' >&2
+    exit 2
+fi
+
+printf 'Cloning Odoo 19 deployment into %s...\n' "${DESTINATION}"
+git clone --depth 1 "${REPOSITORY_URL}" "${DESTINATION}"
+
+PROJECT_DIR="${DESTINATION}"
+cp "${PROJECT_DIR}/.env.example" "${PROJECT_DIR}/.env"
+
+set_env() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" "${PROJECT_DIR}/.env"; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "${PROJECT_DIR}/.env"
+    else
+        printf '%s=%s\n' "${key}" "${value}" >> "${PROJECT_DIR}/.env"
+    fi
+}
+
+set_env "ODOO_HTTP_PORT" "${ODOO_PORT}"
+set_env "ODOO_CHAT_PORT" "${CHAT_PORT}"
+set_env "ODOO_NETWORK" "odoo19_${INSTANCE_SLUG}_internal"
+set_env "ODOO_CONTAINER_NAME" "odoo19-${INSTANCE_SLUG}"
+set_env "ODOO_DB_CONTAINER_NAME" "odoo19-${INSTANCE_SLUG}-db"
+set_env "ODOO_DATA_VOLUME" "odoo19_${INSTANCE_SLUG}_data"
+set_env "ODOO_ROUTER_NAME" "odoo19-${INSTANCE_SLUG}"
+
+"${PROJECT_DIR}/scripts/install-odoo19.sh"

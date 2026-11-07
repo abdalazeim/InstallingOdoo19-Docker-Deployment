@@ -1,60 +1,54 @@
-#!/bin/bash
+#!/bin/sh
+set -eu
+umask 077
 
-set -e
+: "${HOST:=db}"
+: "${PORT:=5432}"
+: "${USER:?USER must be set}"
+: "${PASSWORD:?PASSWORD must be set}"
+: "${ODOO_ADMIN_PASSWORD:?ODOO_ADMIN_PASSWORD must be set}"
+: "${ODOO_PROXY_MODE:=False}"
 
-# set the postgres database host, port, user and password according to the environment
-# and pass them as arguments to the odoo process if not present in the config file
-: ${HOST:=${DB_PORT_5432_TCP_ADDR:='db'}}
-: ${PORT:=${DB_PORT_5432_TCP_PORT:=5432}}
-: ${USER:=${DB_ENV_POSTGRES_USER:=${POSTGRES_USER:='odoo'}}}
-: ${PASSWORD:=${DB_ENV_POSTGRES_PASSWORD:=${POSTGRES_PASSWORD:='odoo19'}}}
+python3 - <<'PY'
+import os
+from pathlib import Path
 
-# install python packages
-# pip3 install pip --upgrade                # may cause errors
-pip3 install -r /etc/odoo/requirements.txt
-
-# Install logrotate if not already installed
-if ! dpkg -l | grep -q logrotate; then
-    apt-get update && apt-get install -y logrotate
-fi
-
-# Copy logrotate config
-cp /etc/odoo/logrotate /etc/logrotate.d/odoo
-
-# Start cron daemon (required for logrotate)
-cron
-
-DB_ARGS=()
-function check_config() {
-    param="$1"
-    value="$2"
-    if grep -q -E "^\s*\b${param}\b\s*=" "$ODOO_RC" ; then       
-        value=$(grep -E "^\s*\b${param}\b\s*=" "$ODOO_RC" |cut -d " " -f3|sed 's/["\n\r]//g')
-    fi;
-    DB_ARGS+=("--${param}")
-    DB_ARGS+=("${value}")
+source = Path("/etc/odoo/odoo.conf").read_text(encoding="utf-8")
+values = {
+    "${ODOO_ADMIN_PASSWORD}": os.environ["ODOO_ADMIN_PASSWORD"],
+    "${POSTGRES_USER}": os.environ["USER"],
+    "${POSTGRES_PASSWORD}": os.environ["PASSWORD"],
+    "${ODOO_PROXY_MODE}": os.environ.get("ODOO_PROXY_MODE", "False"),
 }
-check_config "db_host" "$HOST"
-check_config "db_port" "$PORT"
-check_config "db_user" "$USER"
-check_config "db_password" "$PASSWORD"
+for placeholder, value in values.items():
+    if "\n" in value or "\r" in value:
+        raise SystemExit(f"Invalid newline in value for {placeholder}")
+    source = source.replace(placeholder, value)
 
-case "$1" in
-    -- | odoo)
-        shift
-        if [[ "$1" == "scaffold" ]] ; then
-            exec odoo "$@"
-        else
-            wait-for-psql.py ${DB_ARGS[@]} --timeout=30
-            exec odoo "$@" "${DB_ARGS[@]}"
-        fi
-        ;;
-    -*)
-        wait-for-psql.py ${DB_ARGS[@]} --timeout=30
-        exec odoo "$@" "${DB_ARGS[@]}"
-        ;;
-    *)
-        exec "$@"
-esac
+unresolved = [placeholder for placeholder in values if placeholder in source]
+if unresolved:
+    raise SystemExit(f"Unresolved Odoo configuration values: {', '.join(unresolved)}")
 
-exit 1
+config = Path("/tmp/odoo.conf")
+config.write_text(source, encoding="utf-8")
+config.chmod(0o600)
+PY
+
+python3 - <<'PY'
+import os
+import socket
+import time
+
+host = os.environ.get("HOST", "db")
+port = int(os.environ.get("PORT", "5432"))
+for _ in range(60):
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            break
+    except OSError:
+        time.sleep(1)
+else:
+    raise SystemExit(f"Timed out waiting for PostgreSQL at {host}:{port}")
+PY
+
+exec odoo "$@"

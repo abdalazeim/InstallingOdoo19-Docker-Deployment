@@ -129,14 +129,14 @@ unless you intentionally want to remove Odoo data.
 ### Database backup
 
 ```bash
-./scripts/backup.sh live
-./scripts/health-check.sh live
+./scripts/backup.sh
+./scripts/health-check.sh
 ```
 
 The backup includes all PostgreSQL databases and the Odoo filestore. The
-default output directory is `backups/` in the project. Keep backups and a
-copy of `.env` in a secure location; `.env` contains passwords and is
-excluded from Git.
+default output directory is `backups/` in the project. Both scripts read the
+container names from `.env`. Keep backups and a copy of `.env` in a secure
+location; `.env` contains passwords and is excluded from Git.
 
 ## Troubleshooting
 

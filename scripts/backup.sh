@@ -2,12 +2,14 @@
 set -Eeuo pipefail
 umask 077
 
-INSTANCE_NAME="${1:?Usage: backup.sh <instance-name> [backup-directory]}"
+INSTANCE_NAME="${1:-default}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BACKUP_ROOT="${2:-${PROJECT_DIR}/backups}"
-ODOO_CONTAINER="odoo19-${INSTANCE_NAME}"
-DB_CONTAINER="${ODOO_CONTAINER}-db"
+ODOO_CONTAINER="$(sed -n 's/^ODOO_CONTAINER_NAME=//p' "${PROJECT_DIR}/.env" 2>/dev/null | head -n 1)"
+DB_CONTAINER="$(sed -n 's/^ODOO_DB_CONTAINER_NAME=//p' "${PROJECT_DIR}/.env" 2>/dev/null | head -n 1)"
+ODOO_CONTAINER="${ODOO_CONTAINER:-odoo19}"
+DB_CONTAINER="${DB_CONTAINER:-odoo19-db}"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_DIR="${BACKUP_ROOT}/${INSTANCE_NAME}"
 BACKUP_FILE="${BACKUP_DIR}/odoo19_${INSTANCE_NAME}_${TIMESTAMP}.tar.gz"

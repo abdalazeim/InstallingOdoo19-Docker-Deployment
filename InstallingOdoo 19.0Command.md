@@ -135,8 +135,8 @@ docker compose down
 لإنشاء نسخة احتياطية من قواعد البيانات ومجلد المرفقات:
 
 ```bash
-./scripts/backup.sh live
-./scripts/health-check.sh live
+./scripts/backup.sh
+./scripts/health-check.sh
 ```
 
 يحفظ السكربت النسخة داخل مجلد `backups/` ضمن المشروع ويحتفظ بآخر خمس نسخ.

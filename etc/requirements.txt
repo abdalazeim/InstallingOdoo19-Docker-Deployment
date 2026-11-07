@@ -1,4 +1,4 @@
-# -----------------------
+﻿# -----------------------
 # | Add Python packages |
 # -----------------------
 # packages to install at startup (optional)

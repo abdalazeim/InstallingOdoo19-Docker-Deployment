@@ -51,7 +51,7 @@ services:
       - USER=${POSTGRES_USER:-odoo19}
       - PASSWORD=${POSTGRES_PASSWORD:-odoo@19}
       - ODOO_ADMIN_PASSWORD=${ODOO_ADMIN_PASSWORD:-Admin@19}
-      - ODOO_DB_NAME=${ODOO_DB_NAME:-odoo19}
+      - ODOO_DB_NAME=${ODOO_DB_NAME}
       - ODOO_AUTO_INIT=${ODOO_AUTO_INIT:-1}
       - PIP_BREAK_SYSTEM_PACKAGES=1
     ports:

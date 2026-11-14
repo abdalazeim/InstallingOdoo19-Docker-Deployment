@@ -42,14 +42,14 @@ flowchart LR
     U([المستخدم]) -->|HTTP :10019| O[Odoo 19]
     U -->|خدمة المحادثة :20019| O
     O -->|شبكة Docker داخلية| D[(PostgreSQL 18)]
-    D --> P[(مجلد postgresql)]
+    D --> P[(حجم odoo_pgdata المسمى)]
     O --> F[(حجم بيانات Odoo)]
 ```
 
 | الخدمة | الصورة | منافذ المضيف الافتراضية | حفظ البيانات |
 |---|---|---|---|
 | Odoo | `odoo:19` | `10019` للويب، `20019` للمحادثة | حجم Docker باسم `odoo_data` |
-| PostgreSQL | `postgres:18` | غير مكشوف للمضيف | المجلد `postgresql/` |
+| PostgreSQL | `postgres:18` | غير مكشوف للمضيف | حجم Docker باسم `odoo_pgdata` (PGDATA=/var/lib/postgresql/18/docker) |
 
 ---
 
@@ -105,8 +105,6 @@ cd InstallingOdoo19-Docker-Deployment
 ```bash
 cp .env.example .env
 chmod 600 .env
-mkdir -p postgresql
-chmod 700 postgresql
 chmod +x entrypoint.sh
 ```
 
@@ -185,7 +183,7 @@ docker compose logs -f
 | `ODOO_IMAGE` | `odoo:19` | صورة Odoo |
 | `PG_IMAGE` | `postgres:18` | صورة PostgreSQL |
 | `POSTGRES_USER` | `odoo19` | مستخدم قاعدة البيانات |
-| `POSTGRES_PASSWORD` | `odoo@17` (غيّره فورًا) | كلمة مرور قاعدة البيانات |
+| `POSTGRES_PASSWORD` | `odoo@19` (غيّره فورًا) | كلمة مرور قاعدة البيانات |
 | `POSTGRES_DB` | `postgre` | قاعدة تُنشأ عند تهيئة PostgreSQL لأول مرة |
 | `ODOO_ADMIN_PASSWORD` | `Admin@19` | كلمة مرور Odoo الرئيسية |
 | `ODOO_HTTP_PORT` | `10019` | منفذ المضيف لـ Odoo |
@@ -219,13 +217,13 @@ docker compose logs -f
 
 الخدمتان تستخدمان `restart: always`. يحفظ `docker compose down` البيانات.
 تجنب `docker compose down -v` إلا إذا كنت تريد حذف حجم بيانات Odoo. لا تحذف
-مجلد `postgresql/` إلا إذا كنت تريد حذف بيانات قاعدة البيانات.
+حجم `odoo_pgdata` إلا إذا كنت تريد حذف بيانات قاعدة البيانات.
 
 ---
 
 ## 💾 النسخ الاحتياطي
 
-البيانات محفوظة في مجلد `postgresql/` وحجم Odoo المسمى `odoo_data`. نفّذ
+البيانات محفوظة في حجم `odoo_pgdata` المسمى لـ PostgreSQL وحجم `odoo_data` المسمى لـ Odoo. نفّذ
 الأوامر التالية من مجلد النسخة الافتراضية؛ إذا أنشأت النسخة عبر `run.sh`
 فاستخدم أسماء الحاويات التي تظهرها `docker compose ps`.
 
@@ -251,19 +249,11 @@ docker exec odoo19 rm -f /tmp/odoo-data.tar.gz
 
 ```bash
 chmod 600 .env
-chmod 700 postgresql
 chmod +x entrypoint.sh
 ```
 
-إذا ظهر خطأ صلاحيات لمسار mount محدد، افحص السجلات والمسار أولًا:
-
-```bash
-docker compose logs --tail=100
-ls -ld addons etc postgresql
-```
-
-عدّل صلاحيات المجلد المتأثر فقط. لا تجعل ملفات قاعدة البيانات أو الأسرار قابلة
-للكتابة للجميع.
+الأحجام المسماة (`odoo_data`، `odoo_pgdata`) تديرها Docker ولا تتطلب ضبط
+صلاحيات على المضيف.
 
 ### اختياري · رفع حد inotify
 
@@ -334,14 +324,17 @@ InstallingOdoo19-Docker-Deployment/
 ├── etc/
 │   ├── odoo.conf                 # قالب إعداد Odoo
 │   └── requirements.txt          # حزم Python اختيارية
-├── postgresql/                   # بيانات PostgreSQL (دائمة)
 ├── .env.example                  # قالب متغيرات البيئة
 ├── docker-compose.yml            # نشر مباشر عبر منافذ المضيف
 ├── docker-compose.traefik.yml    # نشر اختياري عبر Traefik
-├── entrypoint.sh                 # تهيئة الإعداد وانتظار PostgreSQL
+├── entrypoint.sh                 # تهيئة الإعداد وانتظار PostgreSQL وتهيئة قاعدة البيانات
 ├── run.sh                        # تثبيت اختياري لنسخ متعددة
 └── README.md
 ```
+
+**الأحجام (غير ملتزمة):**
+- `odoo_data` — ملفات Odoo/المرفقات (حجم مسمى)
+- `odoo_pgdata` — بيانات PostgreSQL (حجم مسمى، PGDATA=/var/lib/postgresql/18/docker)
 
 **قائمة أمان سريعة:**
 

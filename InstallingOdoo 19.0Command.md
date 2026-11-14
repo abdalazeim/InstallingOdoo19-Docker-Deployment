@@ -191,12 +191,41 @@ docker compose logs -f
 | `ODOO_DOMAIN` | مطلوب مع Traefik | اسم النطاق |
 | `DOCKER_PROXY_NETWORK` | `proxy` | شبكة Traefik الخارجية |
 
+### إدارة قاعدة البيانات (`ODOO_DB_NAME`)
+
+| المتغير | القيمة الافتراضية | الوظيفة |
+|---|---|---|
+| `ODOO_DB_NAME` | *(فارغ)* | **فارغ = محدد قواعد البيانات مفعل** (تظهر جميع قواعد البيانات). اضبط اسماً (مثلاً `myapp`) لقفل Odoo على قاعدة واحدة. |
+| `ODOO_AUTO_INIT` | `1` | إنشاء قاعدة تلقائياً عند أول تشغيل إذا كان `ODOO_DB_NAME` مضبوطاً والقاعدة غير موجودة. |
+
+**هام:** ملف `.env.example` الافتراضي يحتوي على `ODOO_DB_NAME=` (فارغ). هذا يفعّل مدير قواعد البيانات في `/web/database/manager` لعرض جميع القواعد. لقفل النظام على قاعدة واحدة، اضبط `ODOO_DB_NAME=اسم_قاعدتك` في `.env` قبل أول تشغيل.
+
+مثال: قفل على قاعدة `myapp`:
+```dotenv
+ODOO_DB_NAME=myapp
+```
+
+طبّق التغييرات:
+```bash
+docker compose up -d
+```
+
 > **قاعدة بيانات موجودة:** متغيرات تهيئة PostgreSQL تُطبَّق عند أول تهيئة
 > لمجلد البيانات فقط. تغيير كلمات المرور في `.env` لا يغيّر بيانات PostgreSQL
-> الموجودة.
+> الموجودة. لإعادة التعيين، أوقف الحاويات واحذف حجم `odoo_pgdata` (`docker compose down -v`).
 
 الإضافات المخصصة توضع في `addons/`. إعداد Odoo الأساسي موجود في
 `etc/odoo.conf`، بينما تُحقن الأسرار وقت التشغيل من البيئة.
+
+## المشاكل الشائعة والحلول
+
+| المشكلة | السبب | الحل |
+|---|---|---|
+| `database 'X' already exists` عند الإنشاء | قاعدة منشأة مسبقاً (auto-init أو يدوياً) | احذف القاعدة: `docker exec -it <db-container> psql -U <user> -d postgres -c "DROP DATABASE X;"` (أوقف Odoo أولاً) |
+| "Logged into database 'X', but dbfilter rejects it" | `list_db = False` + `db_name` مقفلة على قاعدة واحدة | اضبط `list_db = True` في `etc/odoo.conf`، اترك `db_name` معلّقاً |
+| "database is being accessed by other users" عند الحذف | Odoo متصل بالقاعدة | أوقف حاوية Odoo أولاً: `docker compose stop odoo19` |
+| خطأ mount في PostgreSQL 18+ | mount المسار `/var/lib/postgresql/data` غير مدعوم | استخدم حجم مسمى مع `PGDATA=/var/lib/postgresql/18/docker` (مُصلح مسبقاً) |
+| Odoo لا يتصل بـ PostgreSQL | قاعدة البيانات غير جاهزة عند بدء Odoo | Healthcheck + `depends_on: condition: service_healthy` (مُصلح مسبقاً) |
 
 ---
 

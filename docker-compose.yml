@@ -1,17 +1,17 @@
 # Odoo 19 Private Repository - Infrastructure Manager Edition
 #
-# مستودع خاص لـ Odoo 19 يعتمد على الأفكار من Odoo-MultiVersion-Deployment
-# ولكن محسن ليتناسب مع نظام مدير البنية التحتية (Infrastructure Manager).
+# Features:
+# - Environment-driven configuration (no hard-coded passwords)
+# - Optional Traefik/HTTPS reverse-proxy mode
+# - Direct host-port (standalone) mode
+# - Isolated internal network per deployment
+# - Safe entrypoint with PostgreSQL readiness gate
+# - PostgreSQL data stored in a named volume (no host permission issues)
 #
-# الميزات:
-# - دعم متغيرات البيئة (لا كلمات مرور مكتوبة ضمنيًا)
-# - دعم ترافيك كبروكسي عكسي (HTTPS)
-# - وضع ستاندون (وصول مباشر)
-# - شبكة داخلية معزولة لكل ideal
-# - EntryPoint آمن مع انتظار PostgreSQL
-# - ملف .gitignore آمن يستبعد الأسرار والبيانات
-
-version: '3.8'
+# PostgreSQL 18 stores data in a major-version directory (PGDATA), so the
+# legacy "/var/lib/postgresql/data" mount point is not supported. This file
+# uses the Docker-managed volume "odoo_pgdata", which avoids host ownership
+# problems entirely. See docker-compose.bindmount.yml for a host-path variant.
 
 services:
   db:
@@ -23,17 +23,25 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-odoo19}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-odoo@19}
       - POSTGRES_DB=${POSTGRES_DB:-postgre}
+      - PGDATA=/var/lib/postgresql/18/docker
     volumes:
-      - ./postgresql:/var/lib/postgresql/data
+      - odoo_pgdata:/var/lib/postgresql
     networks:
       - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-odoo19} -d ${POSTGRES_DB:-postgre}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   odoo19:
     container_name: ${ODOO_CONTAINER_NAME:-odoo19}
     image: ${ODOO_IMAGE:-odoo:19}
     user: root
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: always
     tty: true
     command: ["--config=/tmp/odoo.conf"]
@@ -43,6 +51,8 @@ services:
       - USER=${POSTGRES_USER:-odoo19}
       - PASSWORD=${POSTGRES_PASSWORD:-odoo@19}
       - ODOO_ADMIN_PASSWORD=${ODOO_ADMIN_PASSWORD:-Admin@19}
+      - ODOO_DB_NAME=${ODOO_DB_NAME:-odoo19}
+      - ODOO_AUTO_INIT=${ODOO_AUTO_INIT:-1}
       - PIP_BREAK_SYSTEM_PACKAGES=1
     ports:
       - "${ODOO_HTTP_PORT:-10019}:8069"
@@ -52,6 +62,7 @@ services:
       - ./addons:/mnt/extra-addons
       - ./etc:/etc/odoo
       - odoo_data:/var/lib/odoo
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     networks:
       - internal
 
@@ -62,3 +73,4 @@ networks:
 
 volumes:
   odoo_data:
+  odoo_pgdata:

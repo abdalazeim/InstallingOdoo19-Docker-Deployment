@@ -42,7 +42,7 @@ An optional Compose file connects Odoo to an existing Traefik network.
 | Component | Image | Host access | Persistent storage |
 |---|---|---|---|
 | Odoo | `odoo:19` | `10019` HTTP · `20019` live service | `odoo_data` volume |
-| PostgreSQL | `postgres:18` | Not published | `./postgresql` |
+| PostgreSQL | `postgres:18` | Not published | `odoo_pgdata` named volume (PGDATA=/var/lib/postgresql/18/docker) |
 
 ## 2. Requirements
 
@@ -58,7 +58,7 @@ flowchart LR
     U -->|Live service :20019| O
     O -->|Private Docker network| D[(PostgreSQL 18)]
     O --> F[(Odoo data volume)]
-    D --> P[(./postgresql)]
+    D --> P[(odoo_pgdata named volume)]
 ```
 
 PostgreSQL is not published to the host. In Traefik mode, requests reach
@@ -78,8 +78,6 @@ cd InstallingOdoo19-Docker-Deployment
 ```bash
 cp .env.example .env
 chmod 600 .env
-mkdir -p postgresql
-chmod 700 postgresql
 chmod +x entrypoint.sh
 ```
 
@@ -248,16 +246,13 @@ Run from the deployment directory:
 Both services use `restart: always`: Docker restarts them after a failure or
 host restart. `docker compose down` preserves data. Avoid `docker compose down
 -v` unless you intend to delete the named Odoo data volume. Never delete
-`postgresql/` unless you intend to remove the PostgreSQL data.
+the `odoo_pgdata` volume unless you intend to remove the PostgreSQL data.
 
 ## 10. Backups
 
-The PostgreSQL bind mount is `postgresql/`; Odoo attachments and files are
-stored in the `odoo_data` named volume. Back up both:
+Odoo attachments and files are stored in the `odoo_data` named volume. PostgreSQL data is in the `odoo_pgdata` named volume. Back up both:
 
-Run these commands from the default single-instance project. For an instance
-created by `run.sh`, replace `odoo19-db` and `odoo19` with the container names
-shown by `docker compose ps`.
+Run these commands from the default single-instance project. For an instance created by `run.sh`, replace `odoo19-db` and `odoo19` with the container names shown by `docker compose ps`.
 
 ```bash
 mkdir -p backups
@@ -279,20 +274,11 @@ access. Use restrictive permissions:
 
 ```bash
 chmod 600 .env
-chmod 700 postgresql
 chmod +x entrypoint.sh
 ```
 
-If a bind mount reports a permission error, inspect the specific path and
-container logs before changing ownership:
-
-```bash
-docker compose logs --tail=100
-ls -ld addons etc postgresql
-```
-
-Change permissions only on the affected directory. Do not make database data
-or password files world-writable.
+Named volumes (`odoo_data`, `odoo_pgdata`) are managed by Docker and do not
+require host permission configuration.
 
 ### Optional · Increase Linux inotify watches
 
@@ -341,14 +327,17 @@ InstallingOdoo19-Docker-Deployment/
 ├── etc/
 │   ├── odoo.conf                 # Odoo configuration template
 │   └── requirements.txt          # Optional Python dependencies
-├── postgresql/                   # PostgreSQL data (persistent; not committed)
 ├── .env.example                  # Environment template
 ├── docker-compose.yml            # Direct host-port deployment
 ├── docker-compose.traefik.yml    # Optional Traefik deployment
-├── entrypoint.sh                 # Runtime config + PostgreSQL wait
+├── entrypoint.sh                 # Runtime config + PostgreSQL wait + auto DB init
 ├── run.sh                        # Optional multi-instance installer
 └── README.md
 ```
+
+**Volumes (not committed):**
+- `odoo_data` — Odoo filestore/attachments (named volume)
+- `odoo_pgdata` — PostgreSQL data (named volume, PGDATA=/var/lib/postgresql/18/docker)
 
 ### Security checklist
 

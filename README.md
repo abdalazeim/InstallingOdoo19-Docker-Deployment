@@ -28,8 +28,9 @@
 10. [Backups](#10-backups)
 11. [Linux Host Tuning and Permissions](#11-linux-host-tuning-and-permissions)
 12. [Troubleshooting](#12-troubleshooting)
-13. [Project Layout and Security](#13-project-layout-and-security)
-14. [References](#14-references)
+13. [Known Issues & Fixes](#13-known-issues--fixes)
+14. [Project Layout and Security](#14-project-layout-and-security)
+15. [References](#15-references)
 
 ---
 
@@ -130,11 +131,18 @@ Edit `.env`; do not commit it. The file is already excluded by `.gitignore`.
 | `DOCKER_PROXY_NETWORK` | `proxy` | Existing Traefik network |
 | `CERTSRESOLVER` | `letsencrypt` | Traefik certificate resolver |
 
-Example: use host ports `11019` and `21019`:
+### Database Management (`ODOO_DB_NAME`)
 
+| Variable | Default | Purpose |
+|---|---|---|
+| `ODOO_DB_NAME` | *(empty)* | **Empty = database selector enabled** (multiple databases visible). Set a name (e.g., `myapp`) to lock Odoo to a single database. |
+| `ODOO_AUTO_INIT` | `1` | Auto-create database on first start if `ODOO_DB_NAME` is set and database doesn't exist. |
+
+**Important:** The default `.env.example` has `ODOO_DB_NAME=` (empty). This enables the database manager at `/web/database/manager` showing all databases. To lock to a single database, set `ODOO_DB_NAME=your_db_name` in `.env` before first start.
+
+Example: lock to single database `myapp`:
 ```dotenv
-ODOO_HTTP_PORT=11019
-ODOO_CHAT_PORT=21019
+ODOO_DB_NAME=myapp
 ```
 
 Apply changes:
@@ -145,7 +153,7 @@ docker compose up -d
 
 > **Existing database:** PostgreSQL initialization variables apply only when
 > the data directory is first initialized. Editing credentials in `.env`
-> does not change roles, passwords, or databases in existing data.
+> does not change roles, passwords, or databases in existing data. To reset, stop containers and remove the `odoo_pgdata` volume (`docker compose down -v`).
 
 Custom addons go in [`addons/`](addons/). Odoo settings are in
 [`etc/odoo.conf`](etc/odoo.conf); runtime secrets are rendered from the
@@ -252,7 +260,9 @@ the `odoo_pgdata` volume unless you intend to remove the PostgreSQL data.
 
 Odoo attachments and files are stored in the `odoo_data` named volume. PostgreSQL data is in the `odoo_pgdata` named volume. Back up both:
 
-Run these commands from the default single-instance project. For an instance created by `run.sh`, replace `odoo19-db` and `odoo19` with the container names shown by `docker compose ps`.
+Run these commands from the default single-instance project. For an instance
+created by `run.sh`, replace `odoo19-db` and `odoo19` with the container names
+shown by `docker compose ps`.
 
 ```bash
 mkdir -p backups
@@ -317,7 +327,17 @@ flowchart LR
     F -->|Yes| H[Check Odoo logs and configuration]
 ```
 
-## 13. Project Layout and Security
+## 13. Known Issues & Fixes
+
+| Issue | Cause | Fix |
+|---|---|---|
+| `database 'X' already exists` on create | Database created by auto-init or manually | Drop database: `docker exec -it <db-container> psql -U <user> -d postgres -c "DROP DATABASE X;"` (stop Odoo first) |
+| "Logged into database 'X', but dbfilter rejects it" | `list_db = False` + `db_name` set locks to one DB | Set `list_db = True` in `etc/odoo.conf`, leave `db_name` commented |
+| "database is being accessed by other users" on DROP | Odoo connected to DB | Stop Odoo container first: `docker compose stop odoo19` |
+| PostgreSQL 18+ mount error | Bind mount `/var/lib/postgresql/data` not supported | Use named volume with `PGDATA=/var/lib/postgresql/18/docker` (already fixed) |
+| Odoo not connecting to PostgreSQL | DB not ready when Odoo starts | Healthcheck + `depends_on: condition: service_healthy` (already fixed) |
+
+## 14. Project Layout and Security
 
 ### Project layout
 
@@ -347,7 +367,7 @@ InstallingOdoo19-Docker-Deployment/
 - [ ] Use HTTPS through a trusted reverse proxy for public access.
 - [ ] Keep Docker Engine and container images updated.
 
-## 14. References
+## 15. References
 
 - [Odoo 19 documentation](https://www.odoo.com/documentation/19.0/)
 - [Docker Compose documentation](https://docs.docker.com/compose/)
